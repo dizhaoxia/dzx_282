@@ -85,18 +85,18 @@ function mockQuery(sql, params) {
     return [{ insertId: mockIds.users }];
   }
   
-  if (sql.startsWith('SELECT * FROM users WHERE phone')) {
-    const user = mockData.users.find(u => u.phone === params[0]);
+  if (sql.startsWith('SELECT') && sql.includes('FROM users') && sql.includes('WHERE phone')) {
+    const user = mockData.users.find(u => u.phone == params[0]);
     return user ? [user] : [];
   }
   
-  if (sql.startsWith('SELECT * FROM users WHERE id')) {
-    const user = mockData.users.find(u => u.id === params[0]);
+  if (sql.startsWith('SELECT') && sql.includes('FROM users') && sql.includes('WHERE id')) {
+    const user = mockData.users.find(u => u.id == params[0]);
     return user ? [user] : [];
   }
   
   if (sql.startsWith('UPDATE users')) {
-    const user = mockData.users.find(u => u.id === params[params.length - 1]);
+    const user = mockData.users.find(u => u.id == params[params.length - 1]);
     if (user) {
       if (sql.includes('nickname')) user.nickname = params[0];
       if (sql.includes('avatar')) user.avatar = params[1] || params[0];
@@ -124,25 +124,32 @@ function mockQuery(sql, params) {
     return [{ insertId: mockIds.properties }];
   }
   
-  if (sql.includes('FROM properties') && !sql.includes('WHERE')) {
-    const result = mockData.properties.map(p => {
-      const facilities = mockData.property_facilities.filter(f => f.property_id === p.id).map(f => f.facility);
-      return { ...p, facilities };
-    });
-    return result;
-  }
-  
-  if (sql.includes('FROM properties WHERE id')) {
-    const prop = mockData.properties.find(p => p.id === params[0]);
-    if (prop) {
-      const facilities = mockData.property_facilities.filter(f => f.property_id === prop.id).map(f => f.facility);
-      return [{ ...prop, facilities }];
+  if (sql.startsWith('SELECT') && /FROM\s+properties/.test(sql) && !/JOIN\s+properties/.test(sql)) {
+    const hasIdWhere = /WHERE\s+p\.id\s*=/.test(sql) || /WHERE\s+id\s*=/.test(sql);
+    const hasHostIdWhere = /WHERE\s+p\.host_id\s*=/.test(sql) || /WHERE\s+host_id\s*=/.test(sql);
+    
+    if (hasIdWhere) {
+      const prop = mockData.properties.find(p => p.id == params[0]);
+      if (prop) {
+        const facilities = mockData.property_facilities.filter(f => f.property_id == prop.id).map(f => f.facility);
+        return [{ ...prop, facilities_list: facilities.length > 0 ? facilities.join(',') : null }];
+      }
+      return [];
     }
-    return [];
-  }
-  
-  if (sql.includes('FROM properties WHERE host_id')) {
-    return mockData.properties.filter(p => p.host_id === params[0]);
+    
+    if (hasHostIdWhere) {
+      const props = mockData.properties.filter(p => p.host_id == params[0]);
+      return props.map(p => {
+        const facilities = mockData.property_facilities.filter(f => f.property_id == p.id).map(f => f.facility);
+        return { ...p, facilities_list: facilities.length > 0 ? facilities.join(',') : null };
+      }).reverse();
+    }
+    
+    const result = mockData.properties.map(p => {
+      const facilities = mockData.property_facilities.filter(f => f.property_id == p.id).map(f => f.facility);
+      return { ...p, facilities_list: facilities.length > 0 ? facilities.join(',') : null };
+    }).reverse();
+    return result;
   }
   
   if (sql.startsWith('INSERT INTO property_facilities')) {
@@ -169,11 +176,11 @@ function mockQuery(sql, params) {
   }
   
   if (sql.includes('FROM calendar WHERE property_id')) {
-    return mockData.calendar.filter(c => c.property_id === params[0]);
+    return mockData.calendar.filter(c => c.property_id == params[0]);
   }
   
   if (sql.startsWith('UPDATE calendar')) {
-    const cal = mockData.calendar.find(c => c.property_id === params[params.length - 2] && c.date === params[params.length - 1]);
+    const cal = mockData.calendar.find(c => c.property_id == params[params.length - 2] && c.date == params[params.length - 1]);
     if (cal) {
       if (sql.includes('status')) cal.status = params[0];
       if (sql.includes('price')) cal.price = params[0];
@@ -203,31 +210,31 @@ function mockQuery(sql, params) {
   }
   
   if (sql.includes('FROM orders WHERE guest_id')) {
-    return mockData.orders.filter(o => o.guest_id === params[0]).reverse();
+    return mockData.orders.filter(o => o.guest_id == params[0]).reverse();
   }
   
-  if (sql.includes('FROM orders WHERE host_id') || sql.includes('INNER JOIN properties ON orders.property_id')) {
-    const hostId = sql.includes('host_id') ? params[0] : params[0];
+  if (sql.includes('INNER JOIN properties ON orders.property_id') || sql.includes('INNER JOIN properties p ON o.property_id')) {
     return mockData.orders
       .filter(o => {
-        const prop = mockData.properties.find(p => p.id === o.property_id);
-        return prop && prop.host_id === hostId;
+        const prop = mockData.properties.find(p => p.id == o.property_id);
+        return prop && prop.host_id == params[0];
       })
       .map(o => {
-        const prop = mockData.properties.find(p => p.id === o.property_id);
+        const prop = mockData.properties.find(p => p.id == o.property_id);
         return { ...o, title: prop ? prop.title : '', cover_image: prop ? prop.cover_image : '' };
       })
       .reverse();
   }
   
-  if (sql.includes('FROM orders WHERE id') || sql.includes('FROM orders WHERE order_no')) {
+  if (sql.includes('FROM orders') && (sql.includes('WHERE id') || sql.includes('WHERE order_no'))) {
+    const isIdQuery = /WHERE\s+(o\.|orders\.)?id\s*=/.test(sql);
     const order = mockData.orders.find(o => 
-      (sql.includes('orders.id') || sql.includes('id')) ? o.id === params[0] : o.order_no === params[0]
+      isIdQuery ? o.id == params[0] : o.order_no == params[0]
     );
     if (order) {
-      const prop = mockData.properties.find(p => p.id === order.property_id);
-      const host = prop ? mockData.users.find(u => u.id === prop.host_id) : null;
-      const guest = mockData.users.find(u => u.id === order.guest_id);
+      const prop = mockData.properties.find(p => p.id == order.property_id);
+      const host = prop ? mockData.users.find(u => u.id == prop.host_id) : null;
+      const guest = mockData.users.find(u => u.id == order.guest_id);
       return [{
         ...order,
         title: prop ? prop.title : '',
@@ -242,7 +249,7 @@ function mockQuery(sql, params) {
   }
   
   if (sql.startsWith('UPDATE orders SET status')) {
-    const order = mockData.orders.find(o => o.id === params[1]);
+    const order = mockData.orders.find(o => o.id == params[1]);
     if (order) order.status = params[0];
     return [{ affectedRows: 1 }];
   }
@@ -264,16 +271,16 @@ function mockQuery(sql, params) {
   }
   
   if (sql.includes('FROM messages WHERE user_id')) {
-    return mockData.messages.filter(m => m.user_id === params[0]).reverse();
+    return mockData.messages.filter(m => m.user_id == params[0]).reverse();
   }
   
-  if (sql.includes('COUNT(*) as unread_count')) {
-    const count = mockData.messages.filter(m => m.user_id === params[0] && m.is_read === 0).length;
+  if (sql.includes('COUNT(*) as unread_count') || sql.includes('COUNT(*)') && sql.includes('is_read')) {
+    const count = mockData.messages.filter(m => m.user_id == params[0] && m.is_read === 0).length;
     return [{ unread_count: count }];
   }
   
   if (sql.startsWith('UPDATE messages SET is_read')) {
-    const msg = mockData.messages.find(m => m.id === params[1] && m.user_id === params[2]);
+    const msg = mockData.messages.find(m => m.id == params[1] && m.user_id == params[2]);
     if (msg) msg.is_read = 1;
     return [{ affectedRows: 1 }];
   }
